@@ -1,4 +1,4 @@
-\ flashforth ffasm implementation of 1w.reset and 1w.slot
+\ flashforth ffasm implementation of 1w.reset and 1w.byte
 \ Implement primitives for communicating with one wire devices
 \ as Maxim DS18B20
 \ Expects register substitution of PORTB DDRB OWPIN PINB
