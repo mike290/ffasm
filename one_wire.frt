@@ -1,8 +1,8 @@
 \ flashforth ffasm implementation of 1w.reset and 1w.byte
-\ Implement primitives for communicating with one wire devices
-\ as Maxim DS18B20
+\ Implementation of primitives for communicating with one wire devices
+\ such as Maxim DS18B20
 \ Expects register substitution of PORTB DDRB OWPIN PINB
-\ with literals during upload e.g. by using forthtalk
+\ with literals during upload e.g. by using forthtalk.py
 \
 \ AUTHORs of original assembler code
 \   B. J. Rodriguez (MSP 430)
