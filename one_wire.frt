@@ -1,6 +1,6 @@
 \ flashforth ffasm implementation of 1w.reset and 1w.slot
 \ Implement primitives for communicating with one wire devices
-\ as Maxim DS18B20
+\ such as Maxim DS18B20
 \ Expects register substitution of PORTB DDRB OWPIN PINB
 \ with literals during upload e.g. by using forthtalk
 \
@@ -23,22 +23,22 @@ marker -wire
 : uS>cycs  ( uS -- cycs )
   Fcy #1000 */  \ # processor cycles
   dup 6 >       \ Min for overhead
-  if
+  if            \ Makes short delays more accurate
     7 -         \ Correct for overhead
-  then          \ Makes short delays more accurate
+  then          
   2 rshift      \ Unsigned 4/ for delay cycles
   1 max         \ Must be at least 1 cycle
 ;
 
 \ Delay n cycles where actual delay will be:
-\ ((n-1) * 4 + 13)/(Fcy/1000)uSecs [includes literal code]
+\ (n * 4 + 9)/(Fcy/1000)uSecs [including literal code]
 \ Example:  n=22 Fcy = 16000 -> delay = 6.0625uSecs
 
 : delay  ( n --   )
   
-  as: begin
-  as:   sbiw r24 1
-  as: until eq
+  as: begin         
+  as:   sbiw r24 1  \ 4 cycles per loop
+  as: until eq      \ Loop until zero
   as: ld r24 y+ \ Pop ToS
   as: ld r25 y+
 ; inlined
