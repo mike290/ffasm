@@ -11,18 +11,23 @@
 \  FlashForth is licensed according to the GNU General Public License *
 \ *********************************************************************
 \    Filename:      ffasm.frt                                         *
-\    Date:          23.10.2017                                        *
+\    ffasm version  2.0                                               *
+\    Date:          05.1.2017                                         *
 \                                                                     *
-\ Added instructions: bld bst sbrc sbrs rol lsl tst clr sei cli clc   *
-\                     sec sleep wdr                                   *
-\ Added indirection to ld & st for x, y  & z                          *
-\ Amended addressing for in, out, cbi, sbi, sbic, sbis: Now need an   *
-\ address in the range $20-$3f/5f. These are mapped to I/O registers  *
-\ $0-$1f/3f. Allows for memory mapped referencing to registers using  *
-\ forthtalk.py e.g. PORTB is always $25                               *
+\ Version 1.0 added :                                                 *
+\ 1. Instructions: bld bst sbrc sbrs rol lsl tst clr sei cli clc sec  * 
+\    sleep wdr                                                        *
+\ 2. Indirection to ld & st for x, y  & z                             *
+\ 3. Amended addressing for in, out, cbi, sbi, sbic, sbis: Now need   *
+\    an address in the range $20-$3f/5f. These are mapped to I/O      *
+\    registers $0-$1f/3f. Allows for memory mapped referencing to     *
+\    registers using forthtalk.py e.g. PORTB is always $25            *
+\ Version 2.0 added:                                                  *
+\ 1. k# which allows rule 'b' intructions to use precalculated k from *
+\    the stack. Stack value is indicated by '^' e.g. ldi r24 ^        *
 \ *********************************************************************
 \ Table driven assembler for Atmega chips
-\ Uses 1624 bytes on an Arduino
+\ Uses 1788 bytes on an Arduino Uno
 \
 -as
 marker -as
@@ -31,7 +36,7 @@ hex
 : ri! ( index n -- ) here swap - dup c@ rot 4 lshift or swap c! ;
 
 flash ar: rules
-\ d mask.shift, r mask.shift
+\ d mask.shift, r mask.shift                 Example intructions
 [ 000.0 , 000.0 , ] \ 00 xxxx.xxxx.xxxx.xxxx ret sleep wdr
 [ 1f0.4 , 007.0 , ] \ 01 xxxx.xxxd.dddd.0rrr bld bst sbrc sbrs
 [ 0f8.3 , 007.0 , ] \ 02 xxxx.xxxx.dddd.dbbb cbi sbi sbic sbis I/O:$20-$3f*, bit:0-7
@@ -180,8 +185,14 @@ hex
 : op? ( word table -- opc index ) sy? dup @ swap 2+ c@ 4 rshift ;
 
 : bw bl word ;
+
 : N# number? 1- 0= abort" ?" ;
 : n# bw N# ;
+: k# bw dup @ $5e01 = \ '^' ?
+  if drop >r rot r> swap \ equiv of '4 roll'
+  else N#
+  then
+;
 : yz? dup 7 and 0=      \ y or z needs opcode
   if >r >r >r $efff and \ changed from $9xxx 
      r> r> r>           \ to $8xxx 
@@ -198,9 +209,10 @@ hex
 :noname ihere over as1 over @ or swap ! ; \ then
 :noname c# i, ihere 2- ;                  \ if
 flash create ask , , , , , ram
+
 :noname r# dup asm ;                \ rule d: rol lsl tst clr (Rd=Rr Only one reg reqd)
 :noname r# 2/ r# 2/ asm ;           \ rule c: movw
-:noname r# n# asm ;                 \ rule b: cpi sbci subi ori andi ldi (r16-32 only)
+:noname r# k# asm ;                 \ rule b: cpi sbci subi ori andi ldi (r16-32 only)
 :noname r# false asm ;              \ rule a: one param: pop push com neg swap inc asr lsr ror dec
 :noname n# >r r# false asm i, r> ;  \ rule 9: sts
 :noname r# n# >r false asm i, r> ;  \ rule 8: lds
@@ -215,14 +227,14 @@ flash create ask , , , , , ram
 flash create ass , , , , , , , , , , , , , , ram
 
 : as: ( -- )
-  bw opcodes op?
-  dup f - 0= 
-  if drop ask + @ex            \ handle flow control
+  bw opcodes op?                \ find the opcode rule
+  dup f - 0=                    \ is it flow control? 
+  if drop ask + @ex             \ handle flow control
   else
-    dup $e <
-    if   dup 2* ass + @ex
-    else r# r# asm             \ two params
-    then i,
+    dup $e <                    \ for rules 0-d
+    if   dup 2* ass + @ex       \ execute noname rule
+    else r# r# asm              \ else default to two registers
+    then i,                     \ compile the machine code
   then
 ; immediate
 
