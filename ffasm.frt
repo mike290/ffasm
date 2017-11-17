@@ -11,8 +11,8 @@
 \  FlashForth is licensed according to the GNU General Public License *
 \ *********************************************************************
 \    Filename:      ffasm.frt                                         *
-\    ffasm version  2.0                                               *
-\    Date:          05.1.2017                                         *
+\    ffasm version  2.1                                               *
+\    Date:          13.11.2017                                        *
 \                                                                     *
 \ Version 1.0 added :                                                 *
 \ 1. Instructions: bld bst sbrc sbrs rol lsl tst clr sei cli clc sec  * 
@@ -22,12 +22,14 @@
 \    an address in the range $20-$3f/5f. These are mapped to I/O      *
 \    registers $0-$1f/3f. Allows for memory mapped referencing to     *
 \    registers using forthtalk.py e.g. PORTB is always $25            *
-\ Version 2.0 added:                                                  *
-\ 1. k# which allows rule 'b' intructions to use precalculated k from *
+\ Version 2.1 added:                                                  *
+\ 1. k1# & k2# which allows instructions to consume parameters from   *
 \    the stack. Stack value is indicated by '^' e.g. ldi r24 ^        *
+\ 2. Implemented additional flow control structures: if-else-then     *
+\    begin-while-repeat & begin-repeat                                *
 \ *********************************************************************
 \ Table driven assembler for Atmega chips
-\ Uses 1788 bytes on an Arduino Uno
+\ Uses 2004 bytes on an Arduino Uno
 \
 -as
 marker -as
@@ -49,7 +51,7 @@ flash ar: rules
 [ 1f0.4 , 000.0 , ] \ 09 xxxx.xxxd.dddd.xxxx sts (2nd byte has addr)
 [ 1f0.4 , 000.0 , ] \ 0a xxxx.xxxd.dddd.xxxx pop push com neg
                     \                        swap inc asr lsr ror dec
-[ 0f0.4 , f0f.4 , ] \ 0b xxxx.kkkk.dddd.kkkk cpi sbci subi ori andi ldi (r16-32 only)
+[ 0f0.4 , f0f.4 , ] \ 0b xxxx.kkkk.dddd.kkkk cpi sbci subi ori andi ldi (r16-31 only)
 [ 0f0.4 , 00f.0 , ] \ 0c xxxx.xxxx.dddd.rrrr movw
 [ 1f0.4 , 20f.5 , ] \ 0d xxxx.xxrd.dddd.rrrr rol lsl tst clr (Rd=Rr Only one reg reqd)
 [ 1f0.4 , 20f.5 ,   \ 0e xxxx.xxrd.dddd.rrrr cpc cp sbc sub add adc cpse
@@ -120,10 +122,12 @@ flash create opcodes
 [ 2800 , ," or"      e 4 ri! ]
 [ 2c00 , ," mov"     e 4 ri! ]
 [ 0000 , ," if"      f 4 ri! ]
-[ 0002 , ," then"    f 6 ri! ]
-[ 0004 , ," begin"   f 6 ri! ]
-[ 0006 , ," until"   f 6 ri! ]
-[ 0008 , ," again"   f 6 ri! ]
+[ 0002 , ," else"    f 6 ri! ]
+[ 0004 , ," then"    f 6 ri! ]
+[ 0006 , ," begin"   f 6 ri! ]
+[ 0008 , ," until"   f 6 ri! ]
+[ 000a , ," while"   f 6 ri! ]
+[ 000c , ," repeat"  f 8 ri! ]
 [ ffff ,
 ram
 
@@ -187,8 +191,14 @@ hex
 : bw bl word ;
 
 : N# number? 1- 0= abort" ?" ;
-: n# bw N# ;
-: k# bw dup @ $5e01 = \ '^' ?
+\ : n# bw N# ; Replaced by k1# & k2#
+: ^? bw dup @ $5e01 = ;   \ '^' ?
+: k1# ^?
+  if drop rot \ Bring stack parameter to ToS
+  else N#
+  then
+;
+: k2# ^?
   if drop >r rot r> swap \ equiv of '4 roll'
   else N#
   then
@@ -200,29 +210,45 @@ hex
 ;
 : d# bw sy1 sy? @ yz? ; \ x, y or z
 : r# bw dup 1+ dup c@ 4f - swap c! N# 1f and ;
-: c# bw sy2 sy? @ ;
+\
+\ Flow control
+: c# bw sy2 sy? @ ; \ Look up flow control type
+\ Modify branch or jump.
+\ Shift branch:3, Shift rjmp:0
+: mbj ( ihere shift --   )
+  swap 2- ihere over 2+ - 2/
+  rot lshift over @ or swap !
+;
 
-: as1 2+ - 2/ 3 lshift 3f8 and ;
-:noname ;                                 \ again
-:noname c# >r ihere as1 r> or i, ;        \ until
-:noname ihere ;                           \ begin
-:noname ihere over as1 over @ or swap ! ; \ then
-:noname c# i, ihere 2- ;                  \ if
-flash create ask , , , , , ram
-
+: ibc c# i, ihere ; \ Insert branch code
+: ijc ihere - 2/ $fff and $c000 or i, ;     \ Insert jump code
+: od? dup 1 and ;   \ Odd number?
+:noname od? if ijc                          \ repeat (begin .. repeat)
+        else >r ijc r> 3 mbj                \ repeat (while .. repeat)                          
+        then ; 
+:noname ibc ;                               \ while
+:noname ihere - $fe and 2* 2* c# or i, ;    \ until (begin .. until)
+:noname ihere 1- ;                          \ begin (set odd flag)
+:noname od? if 1+ 0 mbj                     \ then (else .. then)
+		else 3 mbj                          \ then (if .. then)
+		then ;
+:noname $c000 i, 3 mbj ihere 1- ;           \ else (set odd flag)
+:noname ibc ;                               \ if
+flash create ask , , , , , , , ram    
+\ Create noname words to process parameters based on the opcode and rule lookup.
 :noname r# dup asm ;                \ rule d: rol lsl tst clr (Rd=Rr Only one reg reqd)
 :noname r# 2/ r# 2/ asm ;           \ rule c: movw
-:noname r# k# asm ;                 \ rule b: cpi sbci subi ori andi ldi (r16-32 only)
+:noname r# k2# asm ;                \ rule b: cpi sbci subi ori andi ldi (r16-32 only)
 :noname r# false asm ;              \ rule a: one param: pop push com neg swap inc asr lsr ror dec
-:noname n# >r r# false asm i, r> ;  \ rule 9: sts
-:noname r# n# >r false asm i, r> ;  \ rule 8: lds
-:noname n# $20 - r# swap asm ;      \ rule 7: out I/O($20-5f) <- Rx
-:noname r# n# $20 - asm ;           \ rule 6: in Rx <- I/O($20-5f)
-:noname r# 2/ n# asm ;              \ rule 5: adiw sbiw r24 r26 r28 r30 only
+:noname k1# >r r# false asm i, r> ; \ rule 9: sts
+:noname r# k2# >r false asm i, r> ; \ rule 8: lds
+:noname k1# $20 - r# swap asm ;     \ rule 7: out I/O($20-5f) <- Rx
+:noname r# k2# $20 - asm ;          \ rule 6: in Rx <- I/O($20-5f)
+:noname r# 2/ k2# asm ;             \ rule 5: adiw sbiw r24 r26 r28 r30 only
 :noname d# r# swap asm ;            \ rule 4: st x+ -x y+ -y z+ -z Reg
 :noname r# d# asm ;                 \ rule 3: ld Reg x+ -x y+ -y z+ -z
-:noname n# $20 - n# asm ;           \ rule 2: cbi sbi sbic sbis I/O:20-3f, bit:0-7
-:noname r# n# asm ;                 \ rule 1: bld bst sbrc sbrs R:0-31, bit:0-7
+:noname k1# $20 - k2# asm ;         \ rule 2: cbi sbi sbic sbis I/O:20-3f, bit:0-7
+:noname r# k2# asm ;                \ rule 1: bld bst sbrc sbrs R:0-31, bit:0-7
 :noname drop ;                      \ rule 0: no params ret sleep wdr
 flash create ass , , , , , , , , , , , , , , ram
 
@@ -232,7 +258,7 @@ flash create ass , , , , , , , , , , , , , , ram
   if drop ask + @ex             \ handle flow control
   else
     dup $e <                    \ for rules 0-d
-    if   dup 2* ass + @ex       \ execute noname rule
+    if   dup 2* ass + @ex       \ execute noname to process parameters
     else r# r# asm              \ else default to two registers
     then i,                     \ compile the machine code
   then
